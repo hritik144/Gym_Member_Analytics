@@ -1,8 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from sklearn.linear_model import LinearRegression
-import joblib
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -72,6 +70,22 @@ st.markdown("""
         -webkit-text-fill-color: transparent;
         background-clip: text;
     }
+    .metric-card {
+        background: linear-gradient(135deg, #111827 0%, #1a2740 100%);
+        border: 1px solid #1e3a5f;
+        border-radius: 10px;
+        padding: 0.8rem;
+        text-align: center;
+    }
+    .metric-value {
+        font-size: 1.5rem;
+        font-weight: 800;
+        color: #00d4ff;
+    }
+    .metric-label {
+        font-size: 0.7rem;
+        color: #6b8cae;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -81,36 +95,65 @@ def load_data():
     df = pd.read_csv('gym_members_exercise_tracking.csv')
     return df
 
-# Load or create model
-@st.cache_resource
-def load_or_create_model(df):
-    try:
-        # Suppress the version warning
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            model = joblib.load('model (2).pkl')
-        return model
-    except:
-        st.info("Creating prediction model from data...")
-        
-        # Prepare features for training
-        X = df[['Age', 'Weight (kg)', 'Height (m)', 'Max_BPM', 'Avg_BPM', 
-                'Resting_BPM', 'Session_Duration (hours)', 'Fat_Percentage', 
-                'Water_Intake (liters)', 'Workout_Frequency (days/week)', 
-                'Experience_Level', 'BMI']].copy()
-        
-        # One-hot encode Workout_Type
-        workout_dummies = pd.get_dummies(df['Workout_Type'], prefix='workout')
-        X = pd.concat([X, workout_dummies], axis=1)
-        
-        # One-hot encode Gender
-        X['Gender_Male'] = (df['Gender'] == 'Male').astype(int)
-        
-        y = df['Calories_Burned']
-        
-        model = LinearRegression()
-        model.fit(X, y)
-        return model
+# Simple prediction function (based on average calories by workout type and duration)
+def predict_calories(age, weight, height, max_bpm, avg_bpm, resting_bpm, duration, 
+                    fat_percentage, water_intake, workout_freq, experience, 
+                    workout_type, gender, bmi):
+    
+    # Base calories by workout type
+    workout_base = {
+        'HIIT': 450,
+        'Cardio': 380,
+        'Strength': 350,
+        'Yoga': 280
+    }
+    
+    # Start with base calories for workout type
+    calories = workout_base.get(workout_type, 350)
+    
+    # Add duration factor (main contributor)
+    calories += duration * 350
+    
+    # Age factor
+    if age < 30:
+        calories += 50
+    elif age > 50:
+        calories -= 50
+    
+    # Weight factor
+    calories += (weight - 70) * 3
+    
+    # Heart rate factors
+    calories += (avg_bpm - 140) * 2
+    calories += (max_bpm - 170) * 1.5
+    
+    # BMI factor
+    if bmi > 30:
+        calories += 30
+    elif bmi < 20:
+        calories -= 30
+    
+    # Fat percentage factor
+    calories -= (fat_percentage - 25) * 3
+    
+    # Experience factor
+    exp_factor = {1: -20, 2: 0, 3: 30}
+    calories += exp_factor.get(experience, 0)
+    
+    # Gender factor
+    if gender == "Male":
+        calories += 40
+    
+    # Water intake factor
+    calories += (water_intake - 2.5) * 30
+    
+    # Workout frequency factor
+    calories += (workout_freq - 3) * 15
+    
+    # Ensure calories are within realistic range
+    calories = max(150, min(2000, calories))
+    
+    return int(calories)
 
 # Filter data function
 def filter_data(df, genders, workouts, experience, age_range):
@@ -124,7 +167,6 @@ def filter_data(df, genders, workouts, experience, age_range):
 
 # Load data
 df = load_data()
-model = load_or_create_model(df)
 
 # Sidebar filters
 with st.sidebar:
@@ -166,14 +208,15 @@ with st.sidebar:
     
     # Filter data
     filtered_df = filter_data(df, genders, workouts, experience, age_range)
-    st.metric("Total Members", len(filtered_df))
+    st.metric("📊 Total Members", len(filtered_df))
 
 # Main content
-st.markdown('<div class="main-header">Gym Analytics Dashboard</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">🏋️ Gym Analytics Dashboard</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">Performance · Health · AI Predictions</div>', unsafe_allow_html=True)
 
 # KPIs
 col1, col2, col3, col4, col5 = st.columns(5)
+
 with col1:
     st.markdown(f"""
         <div class="kpi-card">
@@ -181,6 +224,7 @@ with col1:
             <div class="kpi-label">Total Members</div>
         </div>
     """, unsafe_allow_html=True)
+
 with col2:
     avg_cal = filtered_df['Calories_Burned'].mean()
     st.markdown(f"""
@@ -189,6 +233,7 @@ with col2:
             <div class="kpi-label">Avg Calories/Session</div>
         </div>
     """, unsafe_allow_html=True)
+
 with col3:
     avg_dur = filtered_df['Session_Duration (hours)'].mean()
     st.markdown(f"""
@@ -197,6 +242,7 @@ with col3:
             <div class="kpi-label">Avg Duration (hrs)</div>
         </div>
     """, unsafe_allow_html=True)
+
 with col4:
     avg_bmi = filtered_df['BMI'].mean()
     st.markdown(f"""
@@ -205,6 +251,7 @@ with col4:
             <div class="kpi-label">Avg BMI</div>
         </div>
     """, unsafe_allow_html=True)
+
 with col5:
     avg_fat = filtered_df['Fat_Percentage'].mean()
     st.markdown(f"""
@@ -223,9 +270,8 @@ with tab1:
     
     with col1:
         st.subheader("📊 Age Distribution by Workout Type")
-        # Create age groups with string labels instead of Interval objects
-        filtered_df['Age_Group'] = pd.cut(filtered_df['Age'], bins=8)
-        # Convert Interval to string labels
+        # Create age groups
+        filtered_df['Age_Group'] = pd.cut(filtered_df['Age'], bins=6)
         filtered_df['Age_Group_Label'] = filtered_df['Age_Group'].astype(str)
         age_workout_pivot = filtered_df.groupby(['Age_Group_Label', 'Workout_Type']).size().unstack(fill_value=0)
         st.bar_chart(age_workout_pivot)
@@ -254,8 +300,7 @@ with tab2:
         st.bar_chart(cal_by_workout)
         
         st.subheader("📈 Calories vs Session Duration")
-        # Create duration bins with string labels
-        filtered_df['Duration_Bin'] = pd.cut(filtered_df['Session_Duration (hours)'], bins=10)
+        filtered_df['Duration_Bin'] = pd.cut(filtered_df['Session_Duration (hours)'], bins=8)
         filtered_df['Duration_Label'] = filtered_df['Duration_Bin'].astype(str)
         dur_cal = filtered_df.groupby('Duration_Label')['Calories_Burned'].mean()
         st.line_chart(dur_cal)
@@ -266,25 +311,28 @@ with tab2:
         st.bar_chart(bpm_data)
         
         st.subheader("💧 Water Intake vs Calories")
-        filtered_df['Water_Bin'] = pd.cut(filtered_df['Water_Intake (liters)'], bins=10)
+        filtered_df['Water_Bin'] = pd.cut(filtered_df['Water_Intake (liters)'], bins=8)
         filtered_df['Water_Label'] = filtered_df['Water_Bin'].astype(str)
         water_cal = filtered_df.groupby('Water_Label')['Calories_Burned'].mean()
         st.line_chart(water_cal)
     
-    # Correlation matrix
-    st.subheader("📊 Feature Correlations")
-    numeric_cols = ['Age', 'Weight (kg)', 'Max_BPM', 'Avg_BPM', 
-                   'Session_Duration (hours)', 'Calories_Burned', 
-                   'Fat_Percentage', 'Water_Intake (liters)', 
-                   'Workout_Frequency (days/week)', 'BMI']
+    # Correlation matrix (simplified)
+    st.subheader("📊 Key Metrics Summary")
     
-    corr_matrix = filtered_df[numeric_cols].corr()
+    # Create a summary table of key metrics
+    summary_data = []
+    for workout in filtered_df['Workout_Type'].unique():
+        workout_data = filtered_df[filtered_df['Workout_Type'] == workout]
+        summary_data.append({
+            'Workout Type': workout,
+            'Avg Calories': f"{workout_data['Calories_Burned'].mean():.0f}",
+            'Avg Duration': f"{workout_data['Session_Duration (hours)'].mean():.1f}h",
+            'Avg BPM': f"{workout_data['Avg_BPM'].mean():.0f}",
+            'Members': len(workout_data)
+        })
     
-    # Display correlation as a styled dataframe
-    st.dataframe(
-        corr_matrix.style.background_gradient(cmap='coolwarm', axis=None)
-        .format(precision=2)
-    )
+    summary_df = pd.DataFrame(summary_data)
+    st.dataframe(summary_df, use_container_width=True)
 
 # Tab 3: Workouts
 with tab3:
@@ -322,8 +370,8 @@ with tab4:
         weight = st.slider("Weight (kg)", 40.0, 140.0, 70.0, 0.5, key="weight")
         height = st.slider("Height (m)", 1.40, 2.10, 1.70, 0.01, key="height")
         gender = st.selectbox("Gender", ["Male", "Female"], key="gender")
-        workout_type = st.selectbox("Workout Type", ["HIIT", "Cardio", "Strength", "Yoga"], key="workout")
-        experience = st.selectbox("Experience Level", ["Beginner", "Intermediate", "Advanced"], key="exp")
+        workout_type_pred = st.selectbox("Workout Type", ["HIIT", "Cardio", "Strength", "Yoga"], key="workout")
+        experience_pred = st.selectbox("Experience Level", ["Beginner", "Intermediate", "Advanced"], key="exp")
         
     with col2:
         st.markdown("#### ❤️ Heart Rate & Duration")
@@ -341,57 +389,20 @@ with tab4:
     # Calculate BMI
     bmi = weight / (height ** 2)
     
-    # Prepare features for prediction
-    gender_val = 1 if gender == "Male" else 0
+    # Map experience to numeric
     exp_map = {"Beginner": 1, "Intermediate": 2, "Advanced": 3}
-    exp_val = exp_map[experience]
+    exp_val = exp_map[experience_pred]
     
-    # Create feature vector
-    features = {
-        'Age': age,
-        'Weight (kg)': weight,
-        'Height (m)': height,
-        'Max_BPM': max_bpm,
-        'Avg_BPM': avg_bpm,
-        'Resting_BPM': resting_bpm,
-        'Session_Duration (hours)': duration,
-        'Fat_Percentage': fat_percentage,
-        'Water_Intake (liters)': water_intake,
-        'Workout_Frequency (days/week)': workout_freq,
-        'Experience_Level': exp_val,
-        'BMI': bmi,
-        f'workout_{workout_type}': 1,
-        'Gender_Male': gender_val
-    }
-    
-    # Add zero for other workout types
-    for wt in ['HIIT', 'Cardio', 'Strength', 'Yoga']:
-        if f'workout_{wt}' not in features:
-            features[f'workout_{wt}'] = 0
-    
-    # Ensure all features are in the correct order
-    expected_features = ['Age', 'Weight (kg)', 'Height (m)', 'Max_BPM', 'Avg_BPM', 
-                         'Resting_BPM', 'Session_Duration (hours)', 'Fat_Percentage', 
-                         'Water_Intake (liters)', 'Workout_Frequency (days/week)', 
-                         'Experience_Level', 'BMI', 'workout_HIIT', 'workout_Cardio', 
-                         'workout_Strength', 'workout_Yoga', 'Gender_Male']
-    
-    feature_vector = np.array([[features[f] for f in expected_features]])
-    
-    # Make prediction
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            prediction = model.predict(feature_vector)[0]
-    except:
-        # Fallback prediction formula
-        prediction = (duration * 200) + (max_bpm * 2) + (avg_bpm * 1.5) + (weight * 3)
-    
-    prediction = max(100, min(3000, prediction))
+    # Make prediction using our custom function
+    prediction = predict_calories(
+        age, weight, height, max_bpm, avg_bpm, resting_bpm, duration,
+        fat_percentage, water_intake, workout_freq, exp_val,
+        workout_type_pred, gender, bmi
+    )
     
     # Calculate peer comparison
     peer_data = filtered_df[
-        (filtered_df['Workout_Type'] == workout_type) & 
+        (filtered_df['Workout_Type'] == workout_type_pred) & 
         (abs(filtered_df['Age'] - age) <= 5)
     ]
     peer_avg = peer_data['Calories_Burned'].mean() if len(peer_data) > 0 else prediction
@@ -406,13 +417,13 @@ with tab4:
         st.markdown(f"""
             <div class="prediction-card">
                 <div class="kpi-label">🔥 Estimated Calories Burned</div>
-                <div class="prediction-value">{prediction:.0f}</div>
+                <div class="prediction-value">{prediction}</div>
                 <div style="color: #6b8cae; font-size: 0.75rem;">kcal per session</div>
             </div>
         """, unsafe_allow_html=True)
     
     with pred_col2:
-        diff_color = "green" if diff >= 0 else "red"
+        diff_color = "#22c55e" if diff >= 0 else "#f43f5e"
         diff_symbol = "▲" if diff >= 0 else "▼"
         st.markdown(f"""
             <div class="prediction-card">
@@ -429,7 +440,7 @@ with tab4:
             <div class="prediction-card">
                 <div class="kpi-label">📅 Weekly & Monthly Burn</div>
                 <div style="font-size: 1.8rem; font-weight: 800; color: #a855f7">
-                    {prediction * workout_freq:.0f}
+                    {prediction * workout_freq}
                 </div>
                 <div style="color: #6b8cae; font-size: 0.75rem;">
                     weekly | ~{prediction * workout_freq * 4.33:.0f} monthly
@@ -438,23 +449,54 @@ with tab4:
         """, unsafe_allow_html=True)
     
     # Additional metrics
-    metric_col1, metric_col2, metric_col3 = st.columns(3)
+    st.markdown("---")
+    st.subheader("📊 Your Health Metrics")
+    
+    metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
+    
     with metric_col1:
-        st.metric("Your BMI", f"{bmi:.1f}", 
-                  delta=f"{bmi - filtered_df['BMI'].mean():.1f} vs avg",
-                  delta_color="inverse")
+        st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-value">{bmi:.1f}</div>
+                <div class="metric-label">Your BMI</div>
+                <div style="font-size: 0.7rem; color: {'#22c55e' if 18.5 <= bmi <= 24.9 else '#f97316'}">
+                    {'✅ Healthy' if 18.5 <= bmi <= 24.9 else '⚠️ Check'}
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
+    
     with metric_col2:
-        st.metric("Body Fat", f"{fat_percentage:.1f}%",
-                  delta=f"{fat_percentage - filtered_df['Fat_Percentage'].mean():.1f} vs avg")
+        st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-value">{fat_percentage:.1f}%</div>
+                <div class="metric-label">Body Fat %</div>
+                <div style="font-size: 0.7rem; color: #6b8cae;">vs avg: {fat_percentage - filtered_df['Fat_Percentage'].mean():+.1f}%</div>
+            </div>
+        """, unsafe_allow_html=True)
+    
     with metric_col3:
-        st.metric("Weekly Workouts", f"{workout_freq} days",
-                  delta=f"{workout_freq - filtered_df['Workout_Frequency (days/week)'].mean():.1f} vs avg")
+        st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-value">{workout_freq} days</div>
+                <div class="metric-label">Weekly Workouts</div>
+                <div style="font-size: 0.7rem; color: #6b8cae;">vs avg: {workout_freq - filtered_df['Workout_Frequency (days/week)'].mean():+.1f}</div>
+            </div>
+        """, unsafe_allow_html=True)
+    
+    with metric_col4:
+        st.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-value">{duration:.1f}h</div>
+                <div class="metric-label">Session Duration</div>
+                <div style="font-size: 0.7rem; color: #6b8cae;">vs avg: {duration - filtered_df['Session_Duration (hours)'].mean():+.1f}h</div>
+            </div>
+        """, unsafe_allow_html=True)
     
     # Distribution chart
     st.markdown("---")
-    st.subheader(f"📊 Calories Distribution for {workout_type} Members")
+    st.subheader(f"📊 Calories Distribution for {workout_type_pred} Members")
     
-    workout_data = filtered_df[filtered_df['Workout_Type'] == workout_type]['Calories_Burned']
+    workout_data = filtered_df[filtered_df['Workout_Type'] == workout_type_pred]['Calories_Burned']
     if len(workout_data) > 0:
         # Create histogram bins
         hist_values, bin_edges = np.histogram(workout_data, bins=15)
@@ -469,6 +511,11 @@ with tab4:
         
         # Add info about where the user falls
         percentile = (workout_data < prediction).mean() * 100
-        st.info(f"💡 Your predicted value of {prediction:.0f} kcal is higher than {percentile:.0f}% of {workout_type} members.")
+        if percentile > 80:
+            st.success(f"💪 Great job! Your predicted value of {prediction} kcal is higher than {percentile:.0f}% of {workout_type_pred} members!")
+        elif percentile < 20:
+            st.info(f"📈 Your predicted value of {prediction} kcal is lower than {100-percentile:.0f}% of {workout_type_pred} members. Try increasing your session duration or intensity!")
+        else:
+            st.info(f"💡 Your predicted value of {prediction} kcal is higher than {percentile:.0f}% of {workout_type_pred} members.")
     else:
-        st.warning(f"No data available for {workout_type} workout type with current filters.")
+        st.warning(f"No data available for {workout_type_pred} workout type with current filters.")
